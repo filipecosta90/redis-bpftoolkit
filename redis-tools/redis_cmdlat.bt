@@ -1,0 +1,41 @@
+#!/usr/bin/env bpftrace
+/*
+ * redis_cmdlat.bt
+ *                      For Linux, uses bpftrace, eBPF.
+ *
+ * This is a bpftrace tool redis_cmdlat tool, to trace Redis void call(client *c, int flags) function, 
+ * and populates two in-kernel histograms:
+ *      - one broader power-of-2 histogram of the request latency.
+ *      - one detailed up to 1ms latency histogram.
+ * For efficiency, only the histogram summaries are returned to user-level.
+ *
+ * Copyright 2020 Redis Labs.
+ * Licensed under the Apache License, Version 2.0 (the "License")
+ *
+ * 08-Jul-2020  Filipe Oliveira Created this.
+ */
+
+BEGIN
+{
+        printf("Tracing Redis call() function... Hit Ctrl-C to end.\n");
+}
+
+
+uprobe:*redis-server:call
+{
+        @start_ns[tid] = nsecs;
+}
+
+uretprobe:*redis-server:call
+/@start_ns[tid]/
+{
+        $duration_us = (nsecs - @start_ns[tid]) / 1000;
+        @usecs_rediscmds = hist($duration_us);
+        @usecs_rediscmds_detailed = lhist($duration_us,1,1000,1);
+        delete(@start_ns[tid]);
+}
+
+END
+{
+        clear(@start_ns);
+}
